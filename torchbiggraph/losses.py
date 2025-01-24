@@ -160,3 +160,39 @@ class SoftmaxLossFunction(AbstractLossFunction):
             )
 
         return loss_per_sample.sum()
+
+@LOSS_FUNCTIONS.register_as("softmax")
+class DirMultLossFunction(AbstractLossFunction):
+    def forward(
+        self,
+        pos_scores: FloatTensorType,
+        neg_scores: FloatTensorType,
+        weight: Optional[FloatTensorType],
+    ) -> FloatTensorType:
+        num_pos = match_shape(pos_scores, -1)
+        num_neg = match_shape(neg_scores, num_pos, -1)
+
+        # FIXME Workaround for https://github.com/pytorch/pytorch/issues/15870
+        # and https://github.com/pytorch/pytorch/issues/15223.
+        if num_pos == 0 or num_neg == 0:
+            return torch.zeros((), device=pos_scores.device, requires_grad=True)
+
+        scores = torch.cat(
+            [pos_scores.unsqueeze(1), neg_scores.logsumexp(dim=1, keepdim=True)], dim=1
+        )
+        if weight is not None:
+            loss_per_sample = F.cross_entropy(
+                scores,
+                pos_scores.new_zeros((num_pos,), dtype=torch.long),
+                reduction="none",
+            )
+            match_shape(weight, num_pos)
+            loss_per_sample = loss_per_sample * weight
+        else:
+            loss_per_sample = F.cross_entropy(
+                scores,
+                pos_scores.new_zeros((num_pos,), dtype=torch.long),
+                reduction="sum",
+            )
+
+        return loss_per_sample.sum()

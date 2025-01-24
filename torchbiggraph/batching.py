@@ -137,7 +137,6 @@ class AbstractBatchProcessor(ABC):
         self.overrides = overrides
 
     def calc_loss(self, scores: Scores, batch_edges: EdgeList):
-
         lhs_loss = self.loss_fn(scores.lhs_pos, scores.lhs_neg, batch_edges.weight)
         rhs_loss = self.loss_fn(scores.rhs_pos, scores.rhs_neg, batch_edges.weight)
         relation = (

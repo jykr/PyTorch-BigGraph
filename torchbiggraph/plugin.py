@@ -18,6 +18,7 @@ class PluginRegistry(Generic[T]):
         self.registry: Dict[str, Type[T]] = {}
 
     def register(self, name: str, class_: Type[T]) -> None:
+        
         reg_class = self.registry.setdefault(name, class_)
         if reg_class is not class_:
             raise RuntimeError(

@@ -112,6 +112,60 @@ class Trainer(AbstractBatchProcessor):
         return stats
 
 
+class VariationalTrainer(Trainer):
+    def __init__(
+        self,
+        model_optimizer: Optimizer,
+        loss_fn: AbstractLossFunction,
+        relation_weights: List[float],
+    ) -> None:
+        super().__init__(model_optimizer, loss_fn, relation_weights)
+        self.log_prob = self.calc_loss
+
+
+    def _process_one_batch(
+        self, model: MultiRelationEmbedder, batch_edges: EdgeList
+    ) -> Stats:
+        model.zero_grad()
+
+        scores, reg = model(batch_edges)
+
+        log_prob = self.log_prob(scores, batch_edges)
+        d_kl = self.get_kl_divergence(batch_edges.lhs, batch_edges.rhs, model)
+
+        stats = Stats(
+            loss=float(loss),
+            reg=float(reg) if reg is not None else 0.0,
+            violators_lhs=int((scores.lhs_neg > scores.lhs_pos.unsqueeze(1)).sum()),
+            violators_rhs=int((scores.rhs_neg > scores.rhs_pos.unsqueeze(1)).sum()),
+            count=len(batch_edges),
+        )
+        if reg is not None:
+            (loss + reg).backward()
+        else:
+            loss.backward()
+        self.model_optimizer.step(closure=None)
+        for optimizer in self.unpartitioned_optimizers.values():
+            optimizer.step(closure=None)
+        for optimizer in self.partitioned_optimizers.values():
+            optimizer.step(closure=None)
+
+        return stats
+    
+    def calc_loss(self, scores: Scores, batch_edges: EdgeList):
+
+        lhs_loss = self.loss_fn(scores.lhs_pos, scores.lhs_neg, batch_edges.weight)
+        rhs_loss = self.loss_fn(scores.rhs_pos, scores.rhs_neg, batch_edges.weight)
+        relation = (
+            batch_edges.get_relation_type_as_scalar()
+            if batch_edges.has_scalar_relation_type()
+            else 0
+        )
+        loss = self.relation_weights[relation] * (lhs_loss + rhs_loss)
+
+        return loss
+
+
 class IterationManager(MetadataProvider):
     def __init__(
         self,
@@ -477,7 +531,7 @@ class TrainingCoordinator:
             if config.eval_num_uniform_negs is not None:
                 eval_overrides["num_uniform_negs"] = config.eval_num_uniform_negs
 
-            evaluator = RankingEvaluator(
+            evaluator = d(
                 loss_fn=loss_fn,
                 relation_weights=relation_weights,
                 overrides=eval_overrides,
